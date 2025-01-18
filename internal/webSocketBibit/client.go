@@ -1,9 +1,14 @@
-package websocketBibit
+package webSocketBibit
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/websocket"
 	"log"
+)
+
+const (
+	TestBibitWSUrlSpot = "wss://stream-testnet.bybit.com/v5/public/spot"
 )
 
 type Client struct {
@@ -11,51 +16,54 @@ type Client struct {
 	orderBookChannel chan OrderBookData
 }
 
+func (c *Client) OrderBookChannel() chan OrderBookData {
+	return c.orderBookChannel
+}
+
 type OrderBookData struct {
 	Topic string `json:"topic"`
-	Type  string `json:"type"` // snapshot или delta
+	Type  string `json:"type"`
 	Ts    int64  `json:"ts"`
 	Data  struct {
 		Symbol string     `json:"s"`
 		Bids   [][]string `json:"b"`
 		Asks   [][]string `json:"a"`
-		U      int64      `json:"u"` // Update ID
+		U      int64      `json:"u"`
 		Seq    int64      `json:"seq"`
 		Cts    int64      `json:"cts"`
 	} `json:"data"`
 }
 
-func NewClient(url string) (*Client, error) {
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+func StartOrderBookWebSocket(symbol string) *Client {
+	conn, _, err := websocket.DefaultDialer.Dial(TestBibitWSUrlSpot, nil)
+
 	if err != nil {
-		return nil, err
+		log.Fatalf("Error connect WS: %s", err)
 	}
-	orderBookChannel := make(chan OrderBookData)
+	OrderBookChannel := make(chan OrderBookData)
 
-	client := &Client{
-		conn:             conn,
-		orderBookChannel: orderBookChannel,
-	}
-
-	go client.listenWebSocket()
-
-	return client, nil
-}
-
-func (c *Client) SubscribeToTicker(symbol string) error {
 	subscription := map[string]interface{}{
 		"op":   "subscribe",
 		"args": []string{"orderbook.1." + symbol},
 	}
 	subscriptionJSON, err := json.Marshal(subscription)
 	if err != nil {
-		return err
+		log.Fatalf("Error json.Marshal %v", err)
 	}
-	err = c.conn.WriteMessage(websocket.TextMessage, subscriptionJSON)
-	return err
+	err = conn.WriteMessage(websocket.TextMessage, subscriptionJSON)
+	if err != nil {
+		log.Fatalf("Error WriteMessage: %v", err)
+	}
+	client := Client{
+		conn:             conn,
+		orderBookChannel: OrderBookChannel,
+	}
+	go listenWebSocketOrderBook(&client)
+
+	return &client
 }
 
-func (c *Client) listenWebSocket() {
+func listenWebSocketOrderBook(c *Client) {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
@@ -63,7 +71,7 @@ func (c *Client) listenWebSocket() {
 			close(c.orderBookChannel)
 			return
 		}
-
+		fmt.Println("Raw message received:", string(message))
 		var orderBookData OrderBookData
 		err = json.Unmarshal(message, &orderBookData)
 		if err != nil {
@@ -73,12 +81,4 @@ func (c *Client) listenWebSocket() {
 
 		c.orderBookChannel <- orderBookData
 	}
-}
-
-func (c *Client) Close() error {
-	return c.conn.Close()
-}
-
-func (c *Client) GetOrderBookChannel() chan OrderBookData {
-	return c.orderBookChannel
 }

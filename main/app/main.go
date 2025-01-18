@@ -2,32 +2,34 @@ package main
 
 import (
 	"fmt"
-	"github.com/ZarDima0/scapling_bot/internal/websocketBibit"
+	"github.com/ZarDima0/scapling_bot/internal/config"
+	"github.com/ZarDima0/scapling_bot/internal/webSocketBibit"
+	"github.com/hirokisan/bybit/v2"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
-	client, err := websocketBibit.NewClient("wss://stream.bybit.com/v5/public/spot")
+	cfg := config.MustLoad()
+	coins := []bybit.Coin{
+		bybit.CoinUSDT,
+		bybit.Coin("TON"),
+	}
+	client := bybit.NewClient().WithAuth(cfg.TestKey, cfg.TestSecret).WithBaseURL(cfg.TestApiBybit)
+	wallet, err := client.V5().Account().GetWalletBalance(bybit.AccountTypeV5UNIFIED, coins)
+	clientOrderBook := webSocketBibit.StartOrderBookWebSocket("BTCUSDT")
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
+
+	for orderBook := range clientOrderBook.OrderBookChannel() {
+		fmt.Println(orderBook.Data.Seq)
+	}
+
 	if err != nil {
-		log.Fatalf("Failed to create WebSocket client: %v", err)
+		log.Fatal("Error getting wallet balance: ", err)
 	}
+	fmt.Printf("Wallet Balance: %+v\n", wallet.RetCode)
 
-	err = client.SubscribeToTicker("BTCUSDT")
-	if err != nil {
-		log.Fatalf("Failed to subscribe to ticker: %v", err)
-	}
-
-	orderBookChannel := client.GetOrderBookChannel()
-
-	for orderBookData := range orderBookChannel {
-		fmt.Println("Received order book data:")
-		fmt.Println("Bids:", orderBookData.Data.Bids)
-		fmt.Println("Asks:", orderBookData.Data.Asks)
-	}
-
-	defer func() {
-		if err := client.Close(); err != nil {
-			log.Printf("Failed to close WebSocket: %v", err)
-		}
-	}()
 }
