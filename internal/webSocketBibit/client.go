@@ -2,22 +2,18 @@ package webSocketBibit
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/gorilla/websocket"
 	"log"
 )
 
 const (
-	TestBibitWSUrlSpot = "wss://stream-testnet.bybit.com/v5/public/spot"
+	TestBibitWSUrlSpot = "wss://stream.bybit.com/v5/public/spot"
 )
 
-type Client struct {
+type WebSocketClient struct {
 	conn             *websocket.Conn
 	orderBookChannel chan OrderBookData
-}
-
-func (c *Client) OrderBookChannel() chan OrderBookData {
-	return c.orderBookChannel
+	tickerChannel    chan TickerData
 }
 
 type OrderBookData struct {
@@ -34,51 +30,87 @@ type OrderBookData struct {
 	} `json:"data"`
 }
 
-func StartOrderBookWebSocket(symbol string) *Client {
+type TickerData struct {
+	Topic string `json:"topic"`
+	Type  string `json:"type"`
+	Ts    int64  `json:"ts"`
+	Data  struct {
+		Symbol       string `json:"symbol"`
+		LastPrice    string `json:"lastPrice"`
+		HighPrice24h string `json:"highPrice24h"`
+		LowPrice24h  string `json:"lowPrice24h"`
+		Volume24h    string `json:"volume24h"`
+		Turnover24h  string `json:"turnover24h"`
+	} `json:"data"`
+}
+
+func (c *WebSocketClient) OrderBookChannel() chan OrderBookData {
+	return c.orderBookChannel
+}
+
+func (c *WebSocketClient) TickerChannel() chan TickerData {
+	return c.tickerChannel
+}
+
+func StartWebSocketClient(symbol string) *WebSocketClient {
 	conn, _, err := websocket.DefaultDialer.Dial(TestBibitWSUrlSpot, nil)
+	if err != nil {
+		log.Fatalf("Error connecting to WebSocket: %v", err)
+	}
+	orderBookChannel := make(chan OrderBookData, 10)
+	tickerChannel := make(chan TickerData, 10)
 
+	subOrderBook := map[string]interface{}{"op": "subscribe", "args": []string{"orderbook.1." + symbol}}
+	subOrderBookJSON, err := json.Marshal(subOrderBook)
 	if err != nil {
-		log.Fatalf("Error connect WS: %s", err)
+		log.Fatalf("Error marshaling order book subscription: %v", err)
 	}
-	OrderBookChannel := make(chan OrderBookData)
+	err = conn.WriteMessage(websocket.TextMessage, subOrderBookJSON)
+	if err != nil {
+		log.Fatalf("Error subscribing to order book: %v", err)
+	}
 
-	subscription := map[string]interface{}{
-		"op":   "subscribe",
-		"args": []string{"orderbook.1." + symbol},
-	}
-	subscriptionJSON, err := json.Marshal(subscription)
+	subTicker := map[string]interface{}{"op": "subscribe", "args": []string{"tickers." + symbol}}
+	subTickerJSON, err := json.Marshal(subTicker)
 	if err != nil {
-		log.Fatalf("Error json.Marshal %v", err)
+		log.Fatalf("Error marshaling ticker subscription: %v", err)
 	}
-	err = conn.WriteMessage(websocket.TextMessage, subscriptionJSON)
+	err = conn.WriteMessage(websocket.TextMessage, subTickerJSON)
 	if err != nil {
-		log.Fatalf("Error WriteMessage: %v", err)
+		log.Fatalf("Error subscribing to ticker: %v", err)
 	}
-	client := Client{
+
+	client := WebSocketClient{
 		conn:             conn,
-		orderBookChannel: OrderBookChannel,
+		orderBookChannel: orderBookChannel,
+		tickerChannel:    tickerChannel,
 	}
-	go listenWebSocketOrderBook(&client)
+
+	go listenWebSocketMessages(&client)
 
 	return &client
 }
 
-func listenWebSocketOrderBook(c *Client) {
+func listenWebSocketMessages(c *WebSocketClient) {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			log.Printf("Failed to read message: %v", err)
 			close(c.orderBookChannel)
+			close(c.tickerChannel)
 			return
 		}
-		fmt.Println("Raw message received:", string(message))
-		var orderBookData OrderBookData
-		err = json.Unmarshal(message, &orderBookData)
-		if err != nil {
-			log.Printf("Failed to unmarshal message: %v", err)
+		var tickerData TickerData
+		if err := json.Unmarshal(message, &tickerData); err == nil {
+			c.tickerChannel <- tickerData
 			continue
 		}
 
-		c.orderBookChannel <- orderBookData
+		//var orderBookData OrderBookData
+		//if err := json.Unmarshal(message, &orderBookData); err == nil {
+		//	c.orderBookChannel <- orderBookData
+		//	continue
+		//}
+		log.Printf("Received an unknown message: %v", string(message))
 	}
 }
