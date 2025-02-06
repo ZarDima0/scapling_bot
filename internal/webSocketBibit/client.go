@@ -106,11 +106,6 @@ func listenWebSocketMessages(c *WebSocketClient) {
 			continue
 		}
 
-		//var orderBookData OrderBookData
-		//if err := json.Unmarshal(message, &orderBookData); err == nil {
-		//	c.orderBookChannel <- orderBookData
-		//	continue
-		//}
 		log.Printf("Received an unknown message: %v", string(message))
 	}
 }

@@ -11,6 +11,10 @@ type Config struct {
 	TestKey             string `yaml:"testKey"`
 	TestSecret          string `yaml:"testSecret"`
 	TestWebSocketClient string `yaml:"testWebSocketClientBybit"`
+	PostgresUser        string `yaml:"postgresUser"`
+	PostgresPassword    string `yaml:"postgresPassword"`
+	PostgresDB          string `yaml:"postgresDB"`
+	SslMode             string `yaml:"sslMode"`
 }
 
 func MustLoad() *Config {
